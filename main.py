@@ -4,50 +4,85 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_classic.chains import RetrievalQA
+
+# We import the Agent toolkit
+from langchain_classic.agents import initialize_agent, AgentType
+from langchain_core.tools import Tool
+
+# Import the custom tool we just made
+from tools import create_it_ticket
 
 load_dotenv()
 
 app = FastAPI()
 
 # --- 1. Setup Resources ---
-
 llm = ChatGoogleGenerativeAI(model="gemini-flash-latest")
-
 embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
-# LOAD FAISS DATABASE
-# Note: allow_dangerous_deserialization is required for local files in newer versions.
-# In a real enterprise app, ensure you trust the file source (we built it, so we trust it).
+# Load DB
 vector_db = FAISS.load_local(
     "faiss_index", embeddings, allow_dangerous_deserialization=True
 )
+retriever = vector_db.as_retriever()
 
-retriever = vector_db.as_retriever(search_kwargs={"k": 2})
+# --- 2. Define the Toolkit ---
+# We wrap our capabilities as "Tools" so the LLM understands how to use them.
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm, chain_type="stuff", retriever=retriever, return_source_documents=True
+
+# Tool 1: The RAG System (The Brain)
+# We created a mini-function to wrap the retrieval
+def search_knowledge_base(query: str):
+    docs = retriever.invoke(query)
+    return "\n\n".join([d.page_content for d in docs])
+
+
+knowledge_tool = Tool(
+    name="KnowledgeBase",
+    func=search_knowledge_base,
+    description="Use this to answer questions about company policies, holidays, or general info.",
+)
+
+# Tool 2: The Ticket System (The Hands)
+ticket_tool = Tool(
+    name="IT_Ticket_Creator",
+    func=create_it_ticket,
+    description="Use this ONLY when the user explicitly asks to create a ticket.",
+    return_direct=True,  # <--- ADD THIS LINE. It forces the agent to stop immediately after the tool runs.
+)
+
+tools = [knowledge_tool, ticket_tool]
+
+# --- 3. Initialize the Agent ---
+# ZERO_SHOT_REACT_DESCRIPTION means:
+# "Look at the tools, Look at the user query, Reason about which tool to pick."
+agent = initialize_agent(
+    tools,
+    llm,
+    agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+    verbose=True,  # This will print the AI's "thought process" in your terminal
+    handle_parsing_errors=True,
 )
 
 
-# --- 2. Data Contract ---
+# --- 4. API Endpoint ---
 class QueryRequest(BaseModel):
     query: str
     user_id: str = "guest"
 
 
-# --- 3. Endpoints ---
 @app.post("/chat")
 async def chat_endpoint(request: QueryRequest):
-    result = qa_chain.invoke({"query": request.query})
+    # The agent handles the decision making now
+    response = agent.invoke(request.query)
 
     return {
         "received_query": request.query,
-        "ai_response": result["result"],
-        "source_documents": [doc.page_content for doc in result["source_documents"]],
+        "ai_response": response["output"],
+        "status": "completed",
     }
 
 
 @app.get("/")
 def home():
-    return {"message": "RAG Agent (FAISS Edition) is Online"}
+    return {"message": "Agentic Engine (RAG + Tools) is Online"}
