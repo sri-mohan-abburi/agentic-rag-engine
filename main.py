@@ -30,8 +30,8 @@ retriever = vector_db.as_retriever()
 # We wrap our capabilities as "Tools" so the LLM understands how to use them.
 
 
-# Tool 1: The RAG System (The Brain)
-# We created a mini-function to wrap the retrieval
+# Tool 1: The RAG System
+# Created a mini-function to wrap the retrieval
 def search_knowledge_base(query: str):
     docs = retriever.invoke(query)
     return "\n\n".join([d.page_content for d in docs])
@@ -43,12 +43,12 @@ knowledge_tool = Tool(
     description="Use this to answer questions about company policies, holidays, or general info.",
 )
 
-# Tool 2: The Ticket System (The Hands)
+# Tool 2: The Ticket System
 ticket_tool = Tool(
     name="IT_Ticket_Creator",
     func=create_it_ticket,
     description="Use this ONLY when the user explicitly asks to create a ticket.",
-    return_direct=True,  # <--- ADD THIS LINE. It forces the agent to stop immediately after the tool runs.
+    return_direct=True,
 )
 
 tools = [knowledge_tool, ticket_tool]
